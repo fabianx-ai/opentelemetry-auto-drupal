@@ -66,7 +66,9 @@ handed to the browser in the `Server-Timing` response header:
 Server-Timing: traceparent;desc="00-<trace id>-<span id>-01", drupal-cache;desc="MISS", srv;desc="<start in ms>";dur=<ms>
 ```
 
-The browser sends its spans to `callback/traces.php`. See
+Every HTML page also gets a script element for the browser agent
+(`browser/agent.js`), which measures the page view and sends its spans to
+`callback/traces.php`. No Drupal module is needed. See
 [docs/browser-tracing.md](docs/browser-tracing.md) for the design and
 [examples/ddev](examples/ddev) for a complete local setup.
 

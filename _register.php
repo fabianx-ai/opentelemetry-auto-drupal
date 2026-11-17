@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use OpenTelemetry\Contrib\Instrumentation\Drupal\BrowserAgent;
 use OpenTelemetry\Contrib\Instrumentation\Drupal\CacheBackendInstrumentation;
 use OpenTelemetry\Contrib\Instrumentation\Drupal\DatabaseInstrumentation;
 use OpenTelemetry\Contrib\Instrumentation\Drupal\DrupalAutoRootSpan;
@@ -36,6 +37,7 @@ Context::setStorage($contextStorage);
 try {
   CacheBackendInstrumentation::register();
   DrupalAutoRootSpan::register();
+  BrowserAgent::register();
   DrupalKernelInstrumentation::register();
   DatabaseInstrumentation::register();
   EntityInstrumentation::register();
