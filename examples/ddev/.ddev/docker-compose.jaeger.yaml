@@ -1,0 +1,17 @@
+services:
+  jaeger:
+    container_name: ddev-${DDEV_SITENAME}-jaeger
+    image: jaegertracing/all-in-one:1.76.0
+    restart: "no"
+    labels:
+      com.ddev.site-name: ${DDEV_SITENAME}
+      com.ddev.approot: ${DDEV_APPROOT}
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - VIRTUAL_HOST=${DDEV_HOSTNAME}
+      - HTTP_EXPOSE=16687:16686
+      - HTTPS_EXPOSE=16686:16686
+    expose:
+      - "16686"
+      - "4317"
+      - "4318"

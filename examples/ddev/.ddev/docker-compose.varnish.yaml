@@ -1,0 +1,21 @@
+# Optional edge cache in front of the site, to test CDN behaviour:
+# https://<project>.ddev.site:8443 goes through Varnish, the normal URL does not.
+services:
+  varnish:
+    container_name: ddev-${DDEV_SITENAME}-varnish
+    image: varnish:7.6
+    restart: "no"
+    labels:
+      com.ddev.site-name: ${DDEV_SITENAME}
+      com.ddev.approot: ${DDEV_APPROOT}
+    environment:
+      - VARNISH_SIZE=64M
+      - VIRTUAL_HOST=${DDEV_HOSTNAME}
+      - HTTP_EXPOSE=8081:80
+      - HTTPS_EXPOSE=8443:80
+    volumes:
+      - ./varnish/default.vcl:/etc/varnish/default.vcl:ro
+    tmpfs:
+      - /var/lib/varnish/varnishd:exec
+    expose:
+      - "80"

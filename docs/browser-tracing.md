@@ -308,7 +308,7 @@ Tested:
   across both services.
 
 Not tested: the agent itself. The browser side was emulated with curl
-(`browser-trace-demo.sh` in the ddev project); no JavaScript has been
+(`examples/ddev/browser-trace-demo.sh`); no JavaScript has been
 written or run in a browser yet.
 
 ## 5. Details that decide whether it works in practice
@@ -389,7 +389,7 @@ The application side is identical in both: the same environment variables,
 the same header, the same callback path. Only where the path is forwarded
 to differs.
 
-ddev files (in the project, not in this package):
+ddev files, in [`examples/ddev`](../examples/ddev):
 
 - `.ddev/web-build/Dockerfile.opentelemetry`: the PHP extension
 - `.ddev/config.otel.yaml`: `OTEL_*` environment

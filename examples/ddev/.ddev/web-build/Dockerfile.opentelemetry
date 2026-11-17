@@ -1,0 +1,8 @@
+# OpenTelemetry PHP extension (auto-instrumentation hooks).
+RUN apt-get update -qq \
+ && (DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends php${DDEV_PHP_VERSION}-opentelemetry \
+     || (DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends php${DDEV_PHP_VERSION}-dev php-pear build-essential \
+         && pecl install opentelemetry \
+         && echo "extension=opentelemetry.so" > /etc/php/${DDEV_PHP_VERSION}/mods-available/opentelemetry.ini \
+         && phpenmod -v ${DDEV_PHP_VERSION} opentelemetry)) \
+ && rm -rf /var/lib/apt/lists/*
