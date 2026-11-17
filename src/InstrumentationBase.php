@@ -10,6 +10,7 @@ use PerformanceX\OpenTelemetry\Instrumentation\InstrumentationTrait;
 abstract class InstrumentationBase {
   use InstrumentationTrait {
     create as protected createClass;
+    preHook as protected traitPreHook;
   }
 
   /**
@@ -19,6 +20,44 @@ abstract class InstrumentationBase {
     $instance = static::createClass(...$args);
     $instance->registerInstrumentation();
     return $instance;
+  }
+
+  /**
+   * {@inheritdoc}
+   *
+   * Wraps the trait's pre hook so that it also accepts plain functions.
+   *
+   * The extension passes NULL as class when a function (fopen, curl_exec,
+   * ...) is hooked. The trait declares a non-nullable string $class and
+   * ext-opentelemetry >= 1.1 validates hook signatures, rejecting the hook
+   * with "pre hook invalid signature".
+   */
+  protected function preHook(
+    string $operation,
+    array $resolvedParamMap = [],
+    ?callable $customHandler = NULL,
+  ): callable {
+    $handler = static function ($spanBuilder, $object, array $params, string $class, string $function, ...$rest) use ($customHandler) {
+      if ($class === '') {
+        // Name the span "fopen" instead of "::fopen".
+        $spanBuilder->setAttribute(static::UPDATE_NAME, $function);
+      }
+      if ($customHandler !== NULL) {
+        $customHandler($spanBuilder, $object, $params, $class, $function, ...$rest);
+      }
+    };
+    $inner = $this->traitPreHook($operation, $resolvedParamMap, $handler);
+
+    return static function (
+      $object,
+      array $params,
+      ?string $class,
+      string $function,
+      ?string $filename,
+      ?int $lineno,
+    ) use ($inner): void {
+      $inner($object, $params, $class ?? '', $function, $filename, $lineno);
+    };
   }
 
   /**
