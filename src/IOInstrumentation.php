@@ -5,9 +5,70 @@ declare(strict_types=1);
 namespace OpenTelemetry\Contrib\Instrumentation\Drupal;
 
 use OpenTelemetry\API\Instrumentation\CachedInstrumentation;
+use OpenTelemetry\API\Trace\Span;
 
 class IOInstrumentation extends InstrumentationBase {
   public const NAME = 'io';
+
+  /**
+   * One entry per IO call in flight: TRUE when no span was created for it.
+   *
+   * @var bool[]
+   */
+  protected array $skipped = [];
+
+  /**
+   * {@inheritdoc}
+   *
+   * IO functions are called long before (and after) Drupal handles the
+   * request, e.g. by Composer, Drush or the span exporter itself. Without an
+   * active span each of those calls would become a trace of its own, so IO
+   * spans are only created as children of an existing span.
+   */
+  protected function preHook(
+    string $operation,
+    array $resolvedParamMap = [],
+    ?callable $customHandler = NULL,
+  ): callable {
+    $inner = parent::preHook($operation, $resolvedParamMap, $customHandler);
+
+    return function (
+      $object,
+      array $params,
+      ?string $class,
+      string $function,
+      ?string $filename,
+      ?int $lineno,
+    ) use ($inner): void {
+      $skip = !Span::getCurrent()->getContext()->isValid();
+      $this->skipped[] = $skip;
+      if (!$skip) {
+        $inner($object, $params, $class, $function, $filename, $lineno);
+      }
+    };
+  }
+
+  /**
+   * {@inheritdoc}
+   */
+  protected function postHook(
+    string $operation,
+    ?string $resultAttribute = NULL,
+    ?callable $customHandler = NULL,
+  ): callable {
+    $inner = $this->traitPostHook($operation, $resultAttribute, $customHandler);
+
+    return function (
+      $object,
+      array $params,
+      $returnValue,
+      ?\Throwable $exception,
+    ) use ($inner): void {
+      if (!array_pop($this->skipped)) {
+        $inner($object, $params, $returnValue, $exception);
+      }
+    };
+  }
 
   /**
    *

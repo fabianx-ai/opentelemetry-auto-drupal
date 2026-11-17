@@ -11,6 +11,7 @@ abstract class InstrumentationBase {
   use InstrumentationTrait {
     create as protected createClass;
     preHook as protected traitPreHook;
+    postHook as protected traitPostHook;
   }
 
   /**

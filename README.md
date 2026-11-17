@@ -41,6 +41,16 @@ The extension can be disabled via runtime configuration:
 OTEL_PHP_DISABLED_INSTRUMENTATIONS=drupal
 ```
 
+The file and curl IO spans (`fopen`, `fwrite`, `file_get_contents`,
+`curl_exec`, ...) are verbose and can be disabled on their own:
+
+```shell
+OTEL_PHP_DISABLED_INSTRUMENTATIONS=io
+```
+
+IO spans are only created below an active span, so IO performed outside of
+a Drupal request does not produce single-span traces.
+
 ### Query Explain Threshold Configuration
 
 The EXPLAIN threshold feature allows you to set a minimum duration threshold for capturing EXPLAIN results in your traces. When `OTEL_PHP_DRUPAL_EXPLAIN_QUERIES` is enabled, you can use `OTEL_PHP_DRUPAL_EXPLAIN_THRESHOLD` to specify the minimum query duration (in milliseconds) that should trigger EXPLAIN capture.
