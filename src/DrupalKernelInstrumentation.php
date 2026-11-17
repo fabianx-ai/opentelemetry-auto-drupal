@@ -86,6 +86,11 @@ class DrupalKernelInstrumentation extends InstrumentationBase {
         }
 
         $span->setAttribute(TraceAttributes::HTTP_RESPONSE_STATUS_CODE, $response->getStatusCode());
+
+        // Set by the page cache middleware, which runs inside handle().
+        if ($response->headers->has('X-Drupal-Cache')) {
+          $span->setAttribute($this->getAttributeName('page_cache'), $response->headers->get('X-Drupal-Cache'));
+        }
         $span->setAttribute(TraceAttributes::NETWORK_PROTOCOL_NAME, $response->getProtocolVersion());
 
         if (is_string($response->getContent())) {
