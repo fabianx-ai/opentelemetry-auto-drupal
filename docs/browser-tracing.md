@@ -8,8 +8,9 @@ cache, and how the result reads in Grafana.
 Status: design, with the load-bearing mechanisms tested on the ddev stack
 (Drupal 11.4, PHP 8.3, ext-opentelemetry 1.2.1, Jaeger 1.76, Grafana 11.6,
 Varnish 7.6). Each section says what was tested and what is still to build.
-The callback endpoint exists (`callback/traces.php`); issuing the
-transaction and the browser agent are not implemented yet.
+The server side is implemented: issuing the transaction
+(`OTEL_PHP_DRUPAL_BROWSER_TRACING=true`) and the callback endpoint
+(`callback/traces.php`). The browser agent is not.
 
 ## The problem
 
@@ -110,14 +111,21 @@ today's behaviour and get an ordinary root span. This matters because a
 transaction that nobody completes leaves the server root pointing at a
 parent that never arrives.
 
-**How.** In `DrupalAutoRootSpan`, before the root span is created, generate
-the two IDs and present them as if the browser had sent them
-(`traceparent: 00-<trace_id>-<fetch_span_id>-01`). The SDK's root span then
+**How.** `BrowserTransaction::issue()` runs before the root span is created.
+It generates the two IDs and adds them to the request the root span is
+built from, as if the browser had sent
+`traceparent: 00-<trace_id>-<fetch_span_id>-01`. The SDK's root span then
 treats the not-yet-existing browser span as its remote parent. No SDK
-changes are needed.
+changes are needed. It is opt-in: `OTEL_PHP_DRUPAL_BROWSER_TRACING=true`.
 
-**Sampling.** The server decides. With `OTEL_TRACES_SAMPLER` set to a ratio,
-an unsampled request issues no transaction, and the browser stays silent.
+**Sampling.** The server decides. A parent that claims to be sampled would
+make a parent-based sampler record every page view, so the configured
+sampler is asked what it decides for the new trace ID and the flag of the
+issued parent carries that answer. An unsampled request gets no
+`Server-Timing` transaction, and the browser stays silent.
+
+**Redirects.** A redirect response issues a transaction that nobody
+completes; the browser only sees the header of the final response.
 
 **Handing it to the browser.** A response header, set from the
 `DrupalKernel::handle` post hook:
@@ -143,17 +151,21 @@ const transaction = st.traceparent?.description;
 
 Tested:
 
-- A request carrying `traceparent` produces a server trace under that trace
-  ID with the given span as parent, and the route span sits below the
-  request root span. (Tested with the header sent by the client; generating
-  it on the server is the part to build.)
-- A header set in the `handle` post hook is fresh on every response, also on
-  Drupal page cache hits: three requests to a cached page
-  (`X-Drupal-Cache: HIT`) returned three different trace IDs. The hook runs
-  outside the page cache middleware, so the page cache never stores it.
+- A request with `Sec-Fetch-Dest: document` gets a transaction in
+  `Server-Timing`; the server trace is stored under that trace ID with the
+  issued span as parent of the root span, and the route span below the root.
+- A request without `Sec-Fetch-Dest: document`, or one that carries its own
+  `traceparent`, gets no transaction.
+- The transaction is fresh on every response, also on Drupal page cache
+  hits (`drupal-cache;desc="HIT"`, a new trace ID each time). The header is
+  set outside the page cache middleware, so the page cache never stores it.
+  The kernel span carries `drupal.page_cache`.
+- Sampling: at a ratio of 0.3, 40 navigations issued 14 transactions, and
+  exactly those 14 traces were stored.
 
-Not tested: the `Sec-Fetch-*` detection, and `serverTiming` in real
-browsers (it requires HTTPS; Safari supports it from 16.4).
+Not tested: `serverTiming` in real browsers (it requires HTTPS; Safari
+supports it from 16.4), and real browsers' `Sec-Fetch-*` headers; curl sent
+them.
 
 ## 3. Caches in front of Drupal
 
@@ -170,7 +182,11 @@ So the edge has to say what it did, in the one header the browser can read.
 For Varnish:
 
 ```vcl
+import std;
+
 sub vcl_deliver {
+    # Drupal or a module may send more than one Server-Timing line.
+    std.collect(resp.http.Server-Timing, ", ");
     if (obj.hits > 0) {
         set resp.http.Server-Timing = resp.http.Server-Timing + {", edge;desc="HIT""};
     } else {
@@ -405,21 +421,17 @@ ddev files, in [`examples/ddev`](../examples/ddev):
 
 ## 8. What is left to build
 
-1. Issue the transaction in `DrupalAutoRootSpan` and emit `Server-Timing`
-   (transaction, page cache status, server clock) from the `handle` post
-   hook, behind an opt-in environment variable. Mark the kernel span with
-   the page cache outcome.
-2. The browser agent, including the freshness rule and the link for stale
+1. The browser agent, including the freshness rule and the link for stale
    transactions, and a place for it to live. This package is a plain
    Composer library and cannot attach JavaScript to pages; that needs a
    small Drupal module.
-3. Edge configuration for the CDN or Varnish in use (cache status in
+2. Edge configuration for the CDN or Varnish in use (cache status in
    `Server-Timing`).
-4. Endpoint hardening for production: a rate limit at the web server, and
+3. Endpoint hardening for production: a rate limit at the web server, and
    signature verification in the callback script if required.
-5. Grafana: data source, a Web Vitals dashboard, links from panels to
+4. Grafana: data source, a Web Vitals dashboard, links from panels to
    traces.
-6. BigPipe support.
+5. BigPipe support.
 
 ## Open decisions
 

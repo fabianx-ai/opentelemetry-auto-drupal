@@ -1,16 +1,24 @@
 #!/bin/bash
 # Emulates the browser side of the browser-tracing design with curl:
-# 1. navigation carrying a pre-allocated transaction (trace ID + span ID),
+# 1. navigation: the server issues the transaction (trace ID + span ID) in
+#    the Server-Timing header,
 # 2. the browser "completing" the transaction through the same-origin
 #    callback endpoint with OTLP/JSON,
 # 3. reading the joined trace back through Grafana's Jaeger data source.
 set -e
 BASE=${BASE:?Set BASE to the URL of the site, for example BASE=https://example.ddev.site}
 PAGE=${1:-/user/login}
-TRACE=$(openssl rand -hex 16); FETCH=$(openssl rand -hex 8); ROOT=$(openssl rand -hex 8); RES=$(openssl rand -hex 8)
+ROOT=$(openssl rand -hex 8); RES=$(openssl rand -hex 8)
 START=$(date +%s%N)
-curl -sk -o /dev/null -H "traceparent: 00-$TRACE-$FETCH-01" "$BASE$PAGE"
+HEADER=$(curl -sk -o /dev/null -D - -H "Sec-Fetch-Dest: document" -H "Sec-Fetch-Mode: navigate" "$BASE$PAGE" | grep -i '^server-timing:' | tr -d '\r')
 END=$(date +%s%N)
+TRANSACTION=$(echo "$HEADER" | sed -n 's/.*traceparent;desc="\([^"]*\)".*/\1/p')
+if [ -z "$TRANSACTION" ]; then
+  echo "No transaction in the response. Is OTEL_PHP_DRUPAL_BROWSER_TRACING=true set, and the request sampled?" >&2
+  exit 1
+fi
+echo "$HEADER"
+TRACE=$(echo "$TRANSACTION" | cut -d- -f2); FETCH=$(echo "$TRANSACTION" | cut -d- -f3)
 cat > /tmp/beacon.$$.json <<JSON
 {"resourceSpans":[{"resource":{"attributes":[{"key":"service.name","value":{"stringValue":"drupal-browser"}}]},
  "scopeSpans":[{"scope":{"name":"drupal.browser"},"spans":[
