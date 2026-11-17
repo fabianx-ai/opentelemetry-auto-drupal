@@ -244,8 +244,8 @@ cache and file operations. On a busy site, disable `io`, sample, or both.
 
 Optional. It ties what the browser measures (network, edge cache, assets,
 Web Vitals) to the server trace. The design, with what has been tested, is
-in [docs/browser-tracing.md](docs/browser-tracing.md). Three pieces are
-set up on the server; the fourth, the browser agent, is not available yet.
+in [docs/browser-tracing.md](docs/browser-tracing.md). Four pieces are
+set up on the server. The browser agent has been tested in Chromium only.
 
 **1. Issue transactions.** Set `OTEL_PHP_DRUPAL_BROWSER_TRACING=true`.
 Page navigations then receive:
@@ -287,7 +287,30 @@ Check with a request it must reject:
 curl -s -o /dev/null -w '%{http_code}\n' https://example.com/otel/v1/traces   # 405
 ```
 
-**3. Tell the browser about the edge cache.** A CDN or Varnish that caches
+**3. Serve the browser agent.** With browser tracing on, every HTML page
+gets a `<script async src="/otel/v1/agent.js?v=...">` element. Serve
+`browser/agent.js` of this package at that path. For nginx:
+
+```nginx
+location = /otel/v1/agent.js {
+    alias /var/www/html/vendor/mladenrtl/opentelemetry-auto-drupal/browser/agent.js;
+    default_type application/javascript;
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+}
+```
+
+No Drupal module is involved and nothing has to be enabled. Check:
+
+```bash
+curl -s https://example.com/ | grep -o '<script[^>]*agent.js[^>]*>'
+curl -s -o /dev/null -w '%{http_code}\n' https://example.com/otel/v1/agent.js   # 200
+```
+
+Pages rendered before the variable was set are still in Drupal's caches
+without the element: rebuild the caches once (`drush cr`).
+
+**4. Tell the browser about the edge cache.** A CDN or Varnish that caches
 pages replays the `Server-Timing` header of the request that rendered
 them. It has to add its cache status to the header so that the browser can
 tell. For Varnish, see
@@ -332,6 +355,12 @@ shell that runs Drush.
 request has no `Sec-Fetch-Dest: document` header (curl does not send it);
 the request already carries a `traceparent`; or the request was not
 sampled.
+
+**No browser spans.**
+The page has no `agent.js` script element (rebuild Drupal's caches), the
+agent URL returns 404 (step 3), or the page has no `Server-Timing`
+transaction. The agent sends when the page is hidden or left, not while it
+is open. The browser must load the site over HTTPS or from localhost.
 
 **The callback endpoint returns 404 or the Drupal page.**
 The web server does not route the path to `callback/traces.php`; the

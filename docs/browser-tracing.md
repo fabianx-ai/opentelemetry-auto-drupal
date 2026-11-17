@@ -10,7 +10,8 @@ Status: design, with the load-bearing mechanisms tested on the ddev stack
 Varnish 7.6). Each section says what was tested and what is still to build.
 The server side is implemented: issuing the transaction
 (`OTEL_PHP_DRUPAL_BROWSER_TRACING=true`) and the callback endpoint
-(`callback/traces.php`). The browser agent is not.
+(`callback/traces.php`) and the browser agent (`browser/agent.js`). The
+agent has been run in headless Chromium only.
 
 ## The problem
 
@@ -163,9 +164,12 @@ Tested:
 - Sampling: at a ratio of 0.3, 40 navigations issued 14 transactions, and
   exactly those 14 traces were stored.
 
-Not tested: `serverTiming` in real browsers (it requires HTTPS; Safari
-supports it from 16.4), and real browsers' `Sec-Fetch-*` headers; curl sent
-them.
+- In headless Chromium, navigations get a transaction (the browser sends
+  `Sec-Fetch-Dest: document` itself) and the page reads all metrics from
+  `serverTiming`.
+
+Not tested: Firefox and Safari. `serverTiming` needs a secure context
+(HTTPS or localhost); Safari supports it from 16.4.
 
 ## 3. Caches in front of Drupal
 
@@ -199,11 +203,15 @@ The agent then applies one rule. The transaction is **fresh** only if none
 of these is true:
 
 - the edge reports a hit (`edge;desc="HIT"`),
-- the document came from the browser's own cache or the back/forward cache
-  (`transferSize === 0`, `deliveryType === 'cache'`, or navigation type
-  `back_forward`),
+- the document came from the browser's own cache (`deliveryType ===
+  'cache'`, or `transferSize === 0`),
 - as a fallback for an edge that cannot be configured: the server start time
   in `srv` is more than a minute older than the request.
+
+The navigation type is deliberately not part of the rule. Going back or
+reloading can mean a new request to the server, which then issues a new
+transaction that must be completed, or a copy from the cache. What counts
+is whether the response came over the network.
 
 Fresh: complete the transaction (section 4). Stale: generate a new trace ID
 in the browser, send the same spans under it, and attach a span link from
@@ -234,7 +242,17 @@ Tested, with Varnish 7.6 in front of the ddev site:
   and stored with the link (shown as a reference to the other trace), and
   the rendering trace stays retrievable by its ID.
 
-Not tested: the freshness rule in a real browser, and any commercial CDN.
+Tested in headless Chromium:
+
+- A page served by Varnish from its cache (`edge;desc="HIT"`) is reported
+  under a new trace ID with a link to the replayed transaction.
+- Reload, and going back when the browser asks the server again: each gets
+  a fresh transaction and completes it.
+- Going back when the browser serves the page from its own cache
+  (`transferSize` 0, `deliveryType` `cache`): the replayed transaction is
+  recognised as stale and reported under a new trace ID with a link.
+
+Not tested: any commercial CDN, and the timestamp fallback.
 
 ## 4. The browser completes it through the callback endpoint
 
@@ -300,13 +318,31 @@ first beacon after `load` plus a second one for the vitals is the variant.
 **Later requests from the page.** The agent wraps `fetch` and
 `XMLHttpRequest` and adds `traceparent` with the page's trace ID and a new
 span ID. The server side needs nothing new: the package already extracts the
-propagated context. Long-lived pages should start a new trace per
-interaction after the initial load, or one trace grows without bound.
+propagated context. The agent records each call as a CLIENT span and sends
+it with the next beacon. Long-lived pages should start a new trace per
+interaction after the initial load, or one trace grows without bound; the
+agent does not do that yet.
 
-**The agent.** A small dependency-free script (a few KB) attached as a
-Drupal library is enough for the table above. The OpenTelemetry JS SDK or
-Grafana Faro can take its place later; the contract with the server (header
-in, OTLP out) does not change.
+**The agent.** `browser/agent.js`, one dependency-free file of about 13 KB
+unminified. It needs no Drupal module:
+
+- The file is served at `/otel/v1/agent.js`, next to the callback endpoint.
+  Its URL carries a hash of its content, so it can be cached for a year.
+- `BrowserAgent` hooks Drupal's attachment processing and adds one
+  `<script async>` element to the head of every HTML page when
+  `OTEL_PHP_DRUPAL_BROWSER_TRACING=true`.
+
+The element is the same for every visitor, so it is safe inside page-cached
+and edge-cached HTML; what differs per request stays in `Server-Timing`.
+As an external same-origin script it passes a `script-src 'self'` content
+security policy. The agent does nothing when the page has no sampled
+transaction.
+
+The OpenTelemetry JS SDK or Grafana Faro can take its place later; the
+contract with the server (header in, OTLP out) does not change. A Drupal
+module becomes useful when decisions have to be made inside Drupal: only
+some roles or routes, or tying BigPipe placeholders and `Drupal.ajax` to
+spans.
 
 Tested:
 
@@ -323,9 +359,23 @@ Tested:
   `SQL query ← cache get ← route ← GET /path ← documentFetch ← pageload`
   across both services.
 
-Not tested: the agent itself. The browser side was emulated with curl
-(`examples/ddev/browser-trace-demo.sh`); no JavaScript has been
-written or run in a browser yet.
+Tested in headless Chromium (Playwright, Chrome 159):
+
+- A page view sends one beacon, answered with 204. The trace has the
+  browser's `pageload` as its only root, Drupal's request span below
+  `documentFetch`, and the server span lies inside `documentFetch` in time
+  after the clock correction.
+- A `fetch` and an `XMLHttpRequest` made by the page each produce a CLIENT
+  span in the browser and Drupal's server span below it, in the same trace.
+- TTFB, FCP, LCP and CLS arrive as attributes of `pageload`.
+- No JavaScript errors on anonymous pages.
+
+Not tested: INP (it needs a real interaction), pages with BigPipe
+placeholders, Firefox and Safari, and how the element behaves on sites
+whose themes or modules alter the HTML head in unusual ways. The script
+element is added through a hook on an internal Drupal class
+(`HtmlResponseAttachmentsProcessor`), which is the price of not needing a
+module.
 
 ## 5. Details that decide whether it works in practice
 
@@ -421,10 +471,8 @@ ddev files, in [`examples/ddev`](../examples/ddev):
 
 ## 8. What is left to build
 
-1. The browser agent, including the freshness rule and the link for stale
-   transactions, and a place for it to live. This package is a plain
-   Composer library and cannot attach JavaScript to pages; that needs a
-   small Drupal module.
+1. Agent: other browsers, a new trace per interaction on long-lived pages,
+   a minified build.
 2. Edge configuration for the CDN or Varnish in use (cache status in
    `Server-Timing`).
 3. Endpoint hardening for production: a rate limit at the web server, and
@@ -441,6 +489,6 @@ ddev files, in [`examples/ddev`](../examples/ddev):
   status can be added to `Server-Timing` there.
 - **Signed transactions.** Whether the callback script's checks plus a rate
   limit are enough, or it must also verify an HMAC.
-- **Agent.** Own small script, OpenTelemetry JS, or Grafana Faro.
-- **Beacon timing.** One beacon on page hide (complete vitals, late trace)
-  or two (early trace, vitals follow).
+- **Beacon timing.** The agent sends when the page is hidden (complete
+  vitals, late trace). An earlier first beacon after `load` would make
+  traces appear sooner while a tab stays open.
