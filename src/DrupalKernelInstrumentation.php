@@ -4,6 +4,7 @@ namespace OpenTelemetry\Contrib\Instrumentation\Drupal;
 
 use Drupal\Core\DrupalKernel;
 use OpenTelemetry\API\Globals;
+use OpenTelemetry\API\Trace\Span;
 use OpenTelemetry\API\Trace\SpanInterface;
 use OpenTelemetry\API\Trace\SpanKind;
 use OpenTelemetry\API\Trace\StatusCode;
@@ -47,8 +48,14 @@ class DrupalKernelInstrumentation extends InstrumentationBase {
         $spanBuilder->setSpanKind(SpanKind::KIND_SERVER);
 
         if ($request) {
-          $parent = Globals::propagator()->extract($request, RequestPropagationGetter::instance());
-          $spanBuilder->setParent($parent);
+          // The auto root span has already extracted the propagated context
+          // and is the active span. Only fall back to the request headers
+          // when there is no root span, otherwise this span would become a
+          // sibling of the root span below the remote parent.
+          if (!Span::getCurrent()->getContext()->isValid()) {
+            $parent = Globals::propagator()->extract($request, RequestPropagationGetter::instance());
+            $spanBuilder->setParent($parent);
+          }
           $spanBuilder->setAttribute(TraceAttributes::HTTP_URL, $request->getUri())
             ->setAttribute(TraceAttributes::HTTP_REQUEST_METHOD, $request->getMethod())
             ->setAttribute(TraceAttributes::HTTP_REQUEST_CONTENT_LENGTH, $request->headers->get('Content-Length'))
