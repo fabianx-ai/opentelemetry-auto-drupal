@@ -91,6 +91,7 @@ class DrupalKernelInstrumentation extends InstrumentationBase {
         if ($response->headers->has('X-Drupal-Cache')) {
           $span->setAttribute($this->getAttributeName('page_cache'), $response->headers->get('X-Drupal-Cache'));
         }
+        BrowserTransaction::addServerTiming($response);
         $span->setAttribute(TraceAttributes::NETWORK_PROTOCOL_NAME, $response->getProtocolVersion());
 
         if (is_string($response->getContent())) {

@@ -62,6 +62,7 @@ class DrupalAutoRootSpan {
       $request = AutoRootSpan::createRequest();
 
       if ($request) {
+        $request = BrowserTransaction::issue($request);
         AutoRootSpan::create($request);
         AutoRootSpan::registerShutdownHandler();
         static::$rootSpanCreated = TRUE;
