@@ -19,7 +19,7 @@ ddev composer require mladenrtl/opentelemetry-auto-drupal open-telemetry/exporte
 | `docker-compose.jaeger.yaml` | Jaeger all-in-one with OTLP enabled, UI on port 16686 |
 | `docker-compose.grafana.yaml`, `grafana/datasources.yaml` | Grafana on port 3000 with the Jaeger data source, anonymous admin |
 | `docker-compose.varnish.yaml`, `varnish/default.vcl` | Optional Varnish in front of the site on port 8443, reporting its cache status in `Server-Timing` |
-| `nginx/otel-callback.conf` | Routes `POST /otel/v1/traces` to `callback/traces.php` of this package |
+| `nginx/otel-callback.conf` | Routes `POST /otel/v1/traces` to `callback/traces.php` and serves `browser/agent.js` at `/otel/v1/agent.js` |
 
 Each piece is independent; leave out Grafana or Varnish if they are not
 needed. Jaeger keeps traces in memory, so a `ddev restart` clears them.
